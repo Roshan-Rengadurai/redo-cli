@@ -12,9 +12,7 @@ import argparse
 import os
 import re
 import shlex
-import subprocess
 import sys
-import time
 from typing import Optional
 
 from . import __version__
@@ -126,6 +124,9 @@ def _print_fix(event: FailureEvent, d: Diagnosis, footer: str = "") -> None:
 # ---------------------------------------------------------------- commands
 
 def cmd_run(args: argparse.Namespace) -> int:
+    import subprocess   # only `run` needs these; keep bare `redo` startup lean
+    import time
+
     parts = list(args.command)
     if parts and parts[0] == "--":
         parts = parts[1:]
@@ -133,7 +134,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         print("usage: redo run <command> [args...]", file=sys.stderr)
         return 2
 
-    command = shlex.join(parts)
+    # One argument means the user (or a pushed `redo run '<cmd>'`) already
+    # quoted a whole shell line: run it verbatim so pipes/redirects work.
+    command = parts[0] if len(parts) == 1 else shlex.join(parts)
     shell = os.environ.get("SHELL", "/bin/sh")
 
     # stdout/stdin are inherited (stay interactive); stderr is teed so we both

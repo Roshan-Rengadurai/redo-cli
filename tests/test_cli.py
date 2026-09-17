@@ -1,5 +1,7 @@
 import io
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -230,6 +232,16 @@ class CliTests(unittest.TestCase):
         rc, out = self._run([])
         self.assertIn("git status", out)
         self.assertNotIn("on your prompt", out)
+
+    def test_run_single_argument_is_executed_verbatim(self):
+        env = dict(os.environ, REDO_HOME=self.tmp.name, NO_COLOR="1")
+        r = subprocess.run([sys.executable, "-m", "redo_cli", "run",
+                            "python3 -c 'import sys; sys.exit(3)'"],
+                           env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 3)          # ran as a shell line, not as a command name
+        rc, out = self._run(["history"])
+        self.assertIn("python3 -c 'import sys; sys.exit(3)'", out)
+        self.assertNotIn("'python3 -c", out)      # not re-quoted
 
 
 if __name__ == "__main__":
