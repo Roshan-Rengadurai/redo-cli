@@ -93,5 +93,46 @@ class AliasTests(unittest.TestCase):
         self.assertEqual(shell.list_aliases(self.rc), [])
 
 
+class HookSourceTests(unittest.TestCase):
+    def setUp(self):
+        self.spool = Path("/tmp/redo home/spool")
+
+    def test_hook_path(self):
+        self.assertEqual(shell.hook_path("zsh", Path("/h/.redo")), Path("/h/.redo/hook.zsh"))
+
+    def test_zsh_hook_writes_record_to_spool(self):
+        src = shell.hook_source("zsh", self.spool)
+        self.assertIn("add-zsh-hook preexec _redo_preexec", src)
+        self.assertIn("add-zsh-hook precmd _redo_precmd", src)
+        self.assertIn(r"printf '%s\037%s\037%s\037%s\037%s\036'", src)
+        self.assertIn(">> '/tmp/redo home/spool'", src)
+        self.assertIn("print -z", src)
+
+    def test_bash_hook_prepends_prompt_command(self):
+        src = shell.hook_source("bash", self.spool)
+        self.assertIn("PROMPT_COMMAND", src)
+        self.assertIn("history 1", src)
+        self.assertIn("history -s", src)
+
+    def test_fish_hook_uses_events(self):
+        src = shell.hook_source("fish", self.spool)
+        self.assertIn("--on-event fish_preexec", src)
+        self.assertIn("--on-event fish_postexec", src)
+        self.assertIn("commandline -r", src)
+
+    def test_every_hook_skips_signal_exits_and_defines_redo(self):
+        for sh in shell.SUPPORTED:
+            src = shell.hook_source(sh, self.spool)
+            for code in ("130", "141", "148"):
+                self.assertIn(code, src, sh)
+            self.assertIn("_REDO_SKIP", src, sh)
+            self.assertIn("REDO_PUSH_FILE", src, sh)
+            self.assertIn("'/tmp/redo home'/push.", src, sh)
+
+    def test_unknown_shell_raises(self):
+        with self.assertRaises(shell.UnsupportedShell):
+            shell.hook_source("csh", self.spool)
+
+
 if __name__ == "__main__":
     unittest.main()
