@@ -20,7 +20,7 @@ from . import colors as c
 from . import shell
 from .engine import diagnose
 from .models import Confidence, Diagnosis, FailureEvent
-from .storage import Storage, default_db_path
+from .storage import Storage, default_db_path, home_dir, spool_path
 
 _CONF_COLOR = {
     Confidence.HIGH: c.green,
@@ -237,6 +237,38 @@ def cmd_alias(args: argparse.Namespace) -> int:
     return rc_code
 
 
+def cmd_init(args: argparse.Namespace) -> int:
+    sh = args.shell or shell.detect_shell()
+    try:
+        rc = shell.rc_path(sh)
+        if args.print:
+            print(shell.hook_source(sh, spool_path()), end="")
+            return 0
+    except shell.UnsupportedShell as e:
+        print("redo: unsupported shell %s -- pass --shell zsh|bash|fish" % e,
+              file=sys.stderr)
+        return 1
+    hook = shell.hook_path(sh, home_dir())
+
+    if args.remove:
+        if shell.remove_init(rc, hook) == "removed":
+            print(c.yellow("- ") + "removed redo hook" + c.dim("  (from %s)" % rc))
+            print("Open a new shell for it to take effect.")
+        else:
+            print(c.dim("= redo hook is not installed in %s" % rc))
+        return 0
+
+    status = shell.add_init(sh, rc, hook, spool_path())
+    if status == "added":
+        print(c.green("+ ") + shell.source_line(hook) + c.dim("  -> %s" % rc))
+    else:
+        print(c.dim("= hook already in %s; regenerated %s" % (rc, hook)))
+    print()
+    print("Reload your shell to start capturing:  " + c.cyan("source %s" % rc))
+    print("Then, after a command fails, just type  " + c.cyan("redo"))
+    return 0
+
+
 # ----------------------------------------------------------------- parser
 
 def build_parser() -> argparse.ArgumentParser:
@@ -272,6 +304,12 @@ def build_parser() -> argparse.ArgumentParser:
     pa.add_argument("--shell", choices=shell.SUPPORTED,
                     help="override $SHELL detection")
     pa.set_defaults(func=cmd_alias)
+
+    pi = sub.add_parser("init", help="install the shell hook so failures are captured automatically")
+    pi.add_argument("--remove", action="store_true", help="uninstall the hook")
+    pi.add_argument("--print", action="store_true", help="print the hook source instead of installing")
+    pi.add_argument("--shell", choices=shell.SUPPORTED, help="override $SHELL detection")
+    pi.set_defaults(func=cmd_init)
 
     return p
 

@@ -68,6 +68,29 @@ def _foreign_alias_re(name: str) -> "re.Pattern[str]":
     return re.compile(r"^\s*alias\s+%s(=|\s)" % re.escape(name), re.M)
 
 
+def _add_line(rc: Path, line: str) -> bool:
+    """Append `line` to rc unless already present. True if written."""
+    text = _read(rc)
+    if line in text.splitlines():
+        return False
+    rc.parent.mkdir(parents=True, exist_ok=True)
+    with rc.open("a") as f:
+        if text and not text.endswith("\n"):
+            f.write("\n")
+        f.write(line + "\n")
+    return True
+
+
+def _remove_line(rc: Path, line: str) -> bool:
+    """Drop exact `line` from rc. True if something was removed."""
+    lines = _read(rc).splitlines(keepends=True)
+    kept = [ln for ln in lines if ln.rstrip("\n") != line]
+    if len(kept) == len(lines):
+        return False
+    rc.write_text("".join(kept))
+    return True
+
+
 def add_alias(name: str, rc: Path) -> str:
     """Append our alias line. Returns 'added' | 'exists' | 'conflict'."""
     _validate(name)
@@ -76,23 +99,14 @@ def add_alias(name: str, rc: Path) -> str:
         return "exists"
     if _foreign_alias_re(name).search(text):
         return "conflict"
-    rc.parent.mkdir(parents=True, exist_ok=True)
-    with rc.open("a") as f:
-        if text and not text.endswith("\n"):
-            f.write("\n")
-        f.write(alias_line(name) + "\n")
+    _add_line(rc, alias_line(name))
     return "added"
 
 
 def remove_alias(name: str, rc: Path) -> str:
     """Drop our alias line (never a user-written one). Returns 'removed' | 'missing'."""
     _validate(name)
-    lines = _read(rc).splitlines(keepends=True)
-    kept = [ln for ln in lines if ln.rstrip("\n") != alias_line(name)]
-    if len(kept) == len(lines):
-        return "missing"
-    rc.write_text("".join(kept))
-    return "removed"
+    return "removed" if _remove_line(rc, alias_line(name)) else "missing"
 
 
 def list_aliases(rc: Path) -> List[str]:
@@ -265,3 +279,29 @@ def hook_source(shell: str, spool: Path) -> str:
 def _sq(s: str) -> str:
     """Single-quote for sh/zsh/bash/fish (all treat '...' the same)."""
     return "'" + s.replace("'", "'\\''") + "'"
+
+
+def source_line(hook_file: Path) -> str:
+    return "source %s  %s" % (_sq(str(hook_file)), MARKER)
+
+
+def add_init(shell: str, rc: Path, hook_file: Path, spool: Path) -> str:
+    """Write the hook file and make rc source it. Returns 'added' | 'updated'."""
+    hook_file = Path(hook_file)
+    hook_file.parent.mkdir(parents=True, exist_ok=True)
+    hook_file.write_text(hook_source(shell, spool))
+    return "added" if _add_line(rc, source_line(hook_file)) else "updated"
+
+
+def remove_init(rc: Path, hook_file: Path) -> str:
+    """Undo add_init. Returns 'removed' | 'missing'."""
+    hook_file = Path(hook_file)
+    removed = _remove_line(rc, source_line(hook_file))
+    if hook_file.exists():
+        hook_file.unlink()
+        removed = True
+    return "removed" if removed else "missing"
+
+
+def init_installed(rc: Path, hook_file: Path) -> bool:
+    return source_line(Path(hook_file)) in _read(rc).splitlines()

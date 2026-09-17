@@ -114,6 +114,33 @@ class CliTests(unittest.TestCase):
         rc, out = self._run(["alias", "r"])
         self.assertEqual(rc, 1)
 
+    def test_init_installs_hook_and_rc_line(self):
+        os.environ["HOME"] = self.tmp.name
+        os.environ["SHELL"] = "/bin/zsh"
+        rc, out = self._run(["init"])
+        self.assertEqual(rc, 0)
+        hook = os.path.join(self.tmp.name, "hook.zsh")   # REDO_HOME is the tmp dir
+        self.assertTrue(os.path.exists(hook))
+        self.assertIn("# redo-cli", open(os.path.join(self.tmp.name, ".zshrc")).read())
+        self.assertIn("source", out)
+
+    def test_init_print_writes_nothing(self):
+        os.environ["HOME"] = self.tmp.name
+        os.environ["SHELL"] = "/bin/zsh"
+        rc, out = self._run(["init", "--print"])
+        self.assertEqual(rc, 0)
+        self.assertIn("add-zsh-hook", out)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp.name, ".zshrc")))
+
+    def test_init_remove(self):
+        os.environ["HOME"] = self.tmp.name
+        os.environ["SHELL"] = "/bin/zsh"
+        self._run(["init"])
+        rc, out = self._run(["init", "--remove"])
+        self.assertEqual(rc, 0)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "hook.zsh")))
+        self.assertNotIn("redo-cli", open(os.path.join(self.tmp.name, ".zshrc")).read())
+
 
 if __name__ == "__main__":
     unittest.main()

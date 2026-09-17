@@ -134,5 +134,45 @@ class HookSourceTests(unittest.TestCase):
             shell.hook_source("csh", self.spool)
 
 
+class InitTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.rc = root / ".zshrc"
+        self.hook = root / ".redo" / "hook.zsh"
+        self.spool = root / ".redo" / "spool"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_source_line_is_marked_and_quoted(self):
+        self.assertEqual(shell.source_line(Path("/h/.redo/hook.zsh")),
+                         "source '/h/.redo/hook.zsh'  # redo-cli")
+
+    def test_add_init_writes_hook_and_rc_line(self):
+        self.assertEqual(shell.add_init("zsh", self.rc, self.hook, self.spool), "added")
+        self.assertIn("add-zsh-hook", self.hook.read_text())
+        self.assertIn(shell.source_line(self.hook), self.rc.read_text().splitlines())
+
+    def test_add_init_again_regenerates_hook_without_duplicating_line(self):
+        shell.add_init("zsh", self.rc, self.hook, self.spool)
+        self.hook.write_text("stale")
+        self.assertEqual(shell.add_init("zsh", self.rc, self.hook, self.spool), "updated")
+        self.assertIn("add-zsh-hook", self.hook.read_text())
+        self.assertEqual(self.rc.read_text().count("# redo-cli"), 1)
+
+    def test_remove_init(self):
+        shell.add_init("zsh", self.rc, self.hook, self.spool)
+        self.assertEqual(shell.remove_init(self.rc, self.hook), "removed")
+        self.assertFalse(self.hook.exists())
+        self.assertNotIn("redo-cli", self.rc.read_text())
+        self.assertEqual(shell.remove_init(self.rc, self.hook), "missing")
+
+    def test_init_installed(self):
+        self.assertFalse(shell.init_installed(self.rc, self.hook))
+        shell.add_init("zsh", self.rc, self.hook, self.spool)
+        self.assertTrue(shell.init_installed(self.rc, self.hook))
+
+
 if __name__ == "__main__":
     unittest.main()
