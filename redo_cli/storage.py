@@ -6,6 +6,8 @@ single source of truth and nothing to migrate when rules change.
 
 Location: ``~/.redo/history.db`` (override the parent dir with $REDO_HOME,
 which is also how the test suite avoids touching a real home directory).
+The shell hook appends failures to ``~/.redo/spool``; ``ingest_spool`` folds
+them in on the next run.
 """
 
 from __future__ import annotations
@@ -18,10 +20,45 @@ from typing import List, Optional
 from .models import FailureEvent
 
 
-def default_db_path() -> Path:
+SPOOL_FS = "\x1f"   # unit separator between fields
+SPOOL_RS = "\x1e"   # record separator after each record
+
+
+def home_dir() -> Path:
     home = os.environ.get("REDO_HOME")
-    base = Path(home).expanduser() if home else Path.home() / ".redo"
-    return base / "history.db"
+    return Path(home).expanduser() if home else Path.home() / ".redo"
+
+
+def default_db_path() -> Path:
+    return home_dir() / "history.db"
+
+
+def spool_path() -> Path:
+    """Where the shell hook appends failures (see shell.py). Pure-shell
+    writers, Python reader."""
+    return home_dir() / "spool"
+
+
+def parse_spool(text: str) -> List[FailureEvent]:
+    """Decode spool records. Anything malformed (wrong field count, bad
+    numbers, a partial record without its terminator) is dropped."""
+    events = []
+    for rec in text.split(SPOOL_RS)[:-1]:   # last chunk is "" or a partial
+        parts = rec.split(SPOOL_FS)
+        if len(parts) != 5:
+            continue
+        shell, code, cwd, ts, command = parts
+        try:
+            exit_code, timestamp = int(code), float(ts)
+        except ValueError:
+            continue
+        if not command.strip():
+            continue
+        events.append(FailureEvent(
+            id=None, command=command, exit_code=exit_code, stderr="",
+            cwd=cwd, timestamp=timestamp, shell=shell,
+        ))
+    return events
 
 
 _SCHEMA = """
@@ -56,6 +93,30 @@ class Storage:
         )
         self._conn.commit()
         return int(cur.lastrowid)
+
+    def ingest_spool(self, path) -> int:
+        """Move hook-captured failures from the spool file into the db.
+
+        The file is renamed first so shells that append while we read
+        start a fresh spool instead of racing the truncate."""
+        path = Path(path)
+        if not path.exists():
+            return 0
+        work = path.with_suffix(".ingest")
+        try:
+            os.replace(path, work)
+        except OSError:
+            return 0
+        try:
+            events = parse_spool(work.read_text(errors="replace"))
+        finally:
+            try:
+                work.unlink()
+            except OSError:
+                pass
+        for e in events:
+            self.record(e)
+        return len(events)
 
     def latest(self) -> Optional[FailureEvent]:
         row = self._conn.execute(
