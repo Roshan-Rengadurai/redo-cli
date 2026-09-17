@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shlex
 import subprocess
 import sys
 import time
+from typing import Optional
 
 from . import __version__
 from . import colors as c
@@ -39,7 +41,55 @@ def _no_failures() -> str:
     )
 
 
-def _print_fix(event: FailureEvent, d: Diagnosis) -> None:
+# ------------------------------------------------------------ push-to-prompt
+#
+# Under the `redo` shell function (installed by `redo init`) the binary hands
+# a command back through $REDO_PUSH_FILE as "<mode>\n<command>\n"; the
+# function puts it on the prompt ("push") or evals it ("run").
+
+_TRAILING_COMMENT = re.compile(r"\s+#.*$")
+
+
+def _pushable_fix(d: Diagnosis) -> Optional[str]:
+    if not d.matched:
+        return None
+    fix = d.fix_command.strip()
+    if "\n" in fix or fix.startswith("#"):
+        return None                      # multi-step or advice-only: show, don't push
+    return _TRAILING_COMMENT.sub("", fix) or None
+
+
+def _rerun_command(event: FailureEvent) -> str:
+    """`redo run <cmd>` for a hook-captured failure we couldn't diagnose
+    without output. Quoted as one arg when the command has shell syntax."""
+    cmd = event.command.strip()
+    try:
+        plain = shlex.join(shlex.split(cmd)) == cmd
+    except ValueError:
+        plain = False
+    return "redo run " + (cmd if plain else shlex.quote(cmd))
+
+
+def _write_push(mode: str, command: str) -> bool:
+    path = os.environ.get("REDO_PUSH_FILE")
+    if not path:
+        return False
+    with open(path, "w") as f:
+        f.write(mode + "\n" + command + "\n")
+    return True
+
+
+def _push_footer(mode: str, rerun: bool) -> str:
+    bash = os.environ.get("REDO_SHELL") == "bash"
+    if mode == "run":
+        return c.dim("running the fix...")
+    what = "re-run it with output captured" if rerun else "run the fix"
+    if bash:
+        return c.dim("\u2191  press up to load it, then enter to %s" % what)
+    return c.dim("\u21b5  it's on your prompt -- press enter to %s" % what)
+
+
+def _print_fix(event: FailureEvent, d: Diagnosis, footer: str = "") -> None:
     lines = [c.bold("You ran:"), "  " + c.cyan(event.command), ""]
     if d.matched:
         lines += [c.bold("Failure:"), "  " + d.summary, ""]
@@ -61,8 +111,15 @@ def _print_fix(event: FailureEvent, d: Diagnosis) -> None:
             c.dim("  - incorrect command usage"),
             "",
             c.bold("Suggested next step:"),
-            "  " + c.green("redo explain"),
         ]
+        if event.stderr.strip():
+            lines.append("  " + c.green("redo explain"))
+        else:
+            lines.append("  " + c.green(_rerun_command(event)))
+            lines.append(c.dim("  (no output was captured; re-running with "
+                               "`redo run` gets the full diagnosis)"))
+    if footer:
+        lines.append(footer)
     print("\n".join(lines))
 
 
@@ -107,8 +164,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     return code
 
 
-def _latest():
+def _store() -> Storage:
+    """Open the db and fold in anything the shell hook spooled since last time."""
     store = Storage(default_db_path())
+    store.ingest_spool(spool_path())
+    return store
+
+
+def _latest():
+    store = _store()
     event = store.latest()
     store.close()
     return event
@@ -119,7 +183,18 @@ def cmd_fix(args: argparse.Namespace) -> int:
     if event is None:
         print(_no_failures())
         return 0
-    _print_fix(event, diagnose(event))
+    d = diagnose(event)
+
+    footer = ""
+    if not getattr(args, "no_push", False):
+        mode = "run" if getattr(args, "yes", False) else "push"
+        fix = _pushable_fix(d)
+        rerun = False
+        if fix is None and not d.matched and not event.stderr.strip():
+            fix, mode, rerun = _rerun_command(event), "push", True
+        if fix is not None and _write_push(mode, fix):
+            footer = _push_footer(mode, rerun)
+    _print_fix(event, d, footer)
     return 0
 
 
@@ -153,7 +228,7 @@ def cmd_learn(args: argparse.Namespace) -> int:
 
 
 def cmd_history(args: argparse.Namespace) -> int:
-    store = Storage(default_db_path())
+    store = _store()
     events = store.recent(args.limit)
     store.close()
     if not events:
@@ -165,7 +240,7 @@ def cmd_history(args: argparse.Namespace) -> int:
 
 
 def cmd_stats(args: argparse.Namespace) -> int:
-    store = Storage(default_db_path())
+    store = _store()
     events = store.recent(args.limit)
     store.close()
     if not events:
@@ -271,12 +346,23 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 # ----------------------------------------------------------------- parser
 
+def _add_fix_flags(p: argparse.ArgumentParser, top: bool) -> None:
+    # On the sub-parser the defaults are SUPPRESS so `redo fix` doesn't
+    # clobber values parsed at the top level (`redo -y`).
+    dflt = False if top else argparse.SUPPRESS
+    p.add_argument("-y", "--yes", action="store_true", default=dflt,
+                   help="run the fix immediately instead of placing it on the prompt")
+    p.add_argument("--no-push", action="store_true", default=dflt,
+                   help="only print the fix; don't touch the prompt")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="redo",
         description="Explain why the last command failed and suggest a direct fix.",
     )
     p.add_argument("--version", action="version", version="redo %s" % __version__)
+    _add_fix_flags(p, top=True)
     sub = p.add_subparsers(dest="cmd")
 
     pr = sub.add_parser("run", help="run a command and record it if it fails")
@@ -284,7 +370,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="the command to run, e.g. redo run npm run dev")
     pr.set_defaults(func=cmd_run)
 
-    sub.add_parser("fix", help="suggest a fix for the most recent failure").set_defaults(func=cmd_fix)
+    pf = sub.add_parser("fix", help="suggest a fix for the most recent failure")
+    _add_fix_flags(pf, top=False)
+    pf.set_defaults(func=cmd_fix)
     sub.add_parser("explain", help="explain the root cause").set_defaults(func=cmd_explain)
     sub.add_parser("learn", help="learn the underlying concept").set_defaults(func=cmd_learn)
 

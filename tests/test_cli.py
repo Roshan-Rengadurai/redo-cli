@@ -141,6 +141,96 @@ class CliTests(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "hook.zsh")))
         self.assertNotIn("redo-cli", open(os.path.join(self.tmp.name, ".zshrc")).read())
 
+    def _push_file(self):
+        p = os.path.join(self.tmp.name, "push")
+        os.environ["REDO_PUSH_FILE"] = p
+        self.addCleanup(os.environ.pop, "REDO_PUSH_FILE", None)
+        return p
+
+    def _read_push(self, p):
+        return open(p).read() if os.path.exists(p) else None
+
+    def test_fix_ingests_spool_before_reading(self):
+        from redo_cli.storage import spool_path
+        spool_path().write_text("zsh\x1f127\x1f/tmp\x1f5\x1fgti status\x1e")
+        rc, out = self._run([])
+        self.assertIn("git status", out)
+        self.assertFalse(spool_path().exists())
+
+    def test_fix_pushes_single_line_fix(self):
+        p = self._push_file()
+        self._seed("gti status", "zsh: command not found: gti", code=127)
+        rc, out = self._run([])
+        self.assertEqual(self._read_push(p), "push\ngit status\n")
+        self.assertIn("on your prompt", out)
+
+    def test_fix_strips_trailing_comment_when_pushing(self):
+        p = self._push_file()
+        self._seed("npm install", "npm ERR! code ETIMEDOUT")
+        self._run([])
+        self.assertEqual(self._read_push(p), "push\nnpm install\n")
+
+    def test_fix_does_not_push_advice_only_fix(self):
+        p = self._push_file()
+        self._seed("cat /etc/shadow", "cat: /etc/shadow: Permission denied")
+        rc, out = self._run([])
+        self.assertIsNone(self._read_push(p))
+        self.assertNotIn("on your prompt", out)
+
+    def test_yes_flag_uses_run_mode(self):
+        p = self._push_file()
+        self._seed("gti status", "zsh: command not found: gti", code=127)
+        rc, out = self._run(["-y"])
+        self.assertEqual(self._read_push(p), "run\ngit status\n")
+        self.assertIn("running", out)
+
+    def test_yes_flag_on_fix_subcommand(self):
+        p = self._push_file()
+        self._seed("gti status", "zsh: command not found: gti", code=127)
+        self._run(["fix", "--yes"])
+        self.assertEqual(self._read_push(p), "run\ngit status\n")
+
+    def test_no_push_flag(self):
+        p = self._push_file()
+        self._seed("gti status", "zsh: command not found: gti", code=127)
+        rc, out = self._run(["--no-push"])
+        self.assertIsNone(self._read_push(p))
+        self.assertNotIn("on your prompt", out)
+
+    def test_unmatched_hook_failure_pushes_redo_run(self):
+        p = self._push_file()
+        self._seed("make weird-target", "")          # hook-captured: no stderr
+        rc, out = self._run(["-y"])                  # -y must NOT auto re-run
+        self.assertEqual(self._read_push(p), "push\nredo run make weird-target\n")
+        self.assertIn("re-run", out)
+
+    def test_unmatched_hook_failure_quotes_shell_metachars(self):
+        p = self._push_file()
+        self._seed('python -c "import x" | grep y', "")
+        self._run([])
+        self.assertEqual(self._read_push(p),
+                         "push\nredo run 'python -c \"import x\" | grep y'\n")
+
+    def test_unmatched_with_stderr_pushes_nothing(self):
+        p = self._push_file()
+        self._seed("make weird-target", "make: *** No rule to make target")
+        self._run([])
+        self.assertIsNone(self._read_push(p))
+
+    def test_bash_gets_up_arrow_hint(self):
+        self._push_file()
+        os.environ["REDO_SHELL"] = "bash"
+        self.addCleanup(os.environ.pop, "REDO_SHELL", None)
+        self._seed("gti status", "zsh: command not found: gti", code=127)
+        rc, out = self._run([])
+        self.assertIn("press up", out)
+
+    def test_no_push_file_env_prints_only(self):
+        self._seed("gti status", "zsh: command not found: gti", code=127)
+        rc, out = self._run([])
+        self.assertIn("git status", out)
+        self.assertNotIn("on your prompt", out)
+
 
 if __name__ == "__main__":
     unittest.main()
