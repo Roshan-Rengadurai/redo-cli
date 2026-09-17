@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.redo/
+.redo-demo/
+*.db
+.venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.DS_Store
+.impeccable/
