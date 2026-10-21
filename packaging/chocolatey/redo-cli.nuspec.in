@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>redo-cli</id>
+    <version>@VERSION@</version>
+    <title>redo (redo-cli)</title>
+    <authors>Roshan Rengadurai</authors>
+    <owners>Roshan Rengadurai</owners>
+    <projectUrl>https://github.com/Roshan-Rengadurai/redo-cli</projectUrl>
+    <projectSourceUrl>https://github.com/Roshan-Rengadurai/redo-cli</projectSourceUrl>
+    <bugTrackerUrl>https://github.com/Roshan-Rengadurai/redo-cli/issues</bugTrackerUrl>
+    <licenseUrl>https://github.com/Roshan-Rengadurai/redo-cli/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <tags>cli terminal shell powershell debugging developer-tools thefuck</tags>
+    <summary>Explains why your last command failed and hands you the fix.</summary>
+    <description>
+redo explains why the last command you ran failed and gives you the fix. Type `redo` after a
+failure: the corrected command goes into your PowerShell history (press Up, then Enter).
+
+Run `redo init` once to install the PowerShell hook that captures failures automatically.
+Deterministic, no network, no telemetry. Destructive fixes are never run automatically.
+    </description>
+    <releaseNotes>https://github.com/Roshan-Rengadurai/redo-cli/releases/tag/v@VERSION@</releaseNotes>
+    <dependencies>
+      <dependency id="python3" version="3.9" />
+    </dependencies>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

@@ -1,0 +1,83 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: tests (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, python: "3.9" }
+          - { os: ubuntu-latest, python: "3.13" }
+          - { os: macos-latest, python: "3.13" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: shells for the hook tests (pwsh is preinstalled on these runners)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q zsh fish
+      - run: pip install -e ".[dev]"
+      - run: python -m pytest -q
+
+  windows:
+    name: windows (PowerShell + Chocolatey)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[dev]" build
+      - name: unit tests (informational until the suite is ported to Windows paths)
+        continue-on-error: true
+        run: python -m pytest -q
+      - name: render the Chocolatey package against the local build
+        run: python packaging/render.py --local
+      - name: choco pack + install
+        working-directory: dist/chocolatey/redo-cli
+        run: |
+          choco pack
+          choco install redo-cli --source . -y --no-progress
+      - name: smoke test the installed redo in PowerShell
+        shell: pwsh
+        run: |
+          Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1"; refreshenv
+          $env:REDO_HOME = "$env:RUNNER_TEMP\redo"; $env:NO_COLOR = '1'
+          redo --version
+          redo run 'gti status'; $global:LASTEXITCODE = 0
+          $out = redo --no-push | Out-String; $out
+          if ($out -notmatch 'git status') { throw 'expected the fix "git status"' }
+          redo init --shell pwsh
+          if (-not (Select-String -Path $PROFILE -Pattern 'redo-cli' -Quiet)) { throw 'profile not written' }
+          pwsh -NoProfile -Command ". `$PROFILE; if (-not (Get-Command redo -CommandType Function)) { exit 1 }"
+          if ($LASTEXITCODE) { throw 'hook did not load from $PROFILE' }
+      - name: choco uninstall
+        run: choco uninstall redo-cli -y --no-progress
+
+  homebrew:
+    name: homebrew formula
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install build && python packaging/render.py --local
+      - name: install + test from a local tap
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: |
+          brew tap-new --no-git local/redo
+          cp dist/homebrew/redo-cli.rb "$(brew --repository)/Library/Taps/local/homebrew-redo/Formula/"
+          brew install --formula local/redo/redo-cli
+          brew test local/redo/redo-cli
+          brew style local/redo/redo-cli
+          "$(brew --prefix)/bin/redo" --version
