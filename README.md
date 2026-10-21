@@ -18,7 +18,7 @@ MVP, built in stages.
 |-------|-------|-------|
 | 1 | Detection engine, SQLite history, `run/fix/explain/learn/history/stats`, `alias` | done |
 | 2 | `redo init` shell hook (auto-capture), fix pushed onto the prompt | done |
-| 3 | PowerShell hook, Homebrew tap + Chocolatey packages, CI on Linux/macOS/Windows | done |
+| 3 | PowerShell (pwsh) hook, Homebrew tap, CI on Linux/macOS | done |
 | 4 | Live stderr capture in hook mode (opt-in, pty) | next |
 
 ## Install
@@ -35,9 +35,8 @@ redo init        # zsh / bash / fish: adds one `source` line to your rc file
 exec $SHELL
 ```
 
-```powershell
-redo init        # PowerShell 7 or Windows PowerShell: adds one line to $PROFILE
-. $PROFILE       # (on macOS/Linux pwsh: redo init --shell pwsh)
+```sh
+redo init --shell pwsh   # PowerShell 7 on macOS/Linux: adds one line to $PROFILE
 ```
 
 The package is called `redo-cli`; the command is `redo`. (Homebrew's own

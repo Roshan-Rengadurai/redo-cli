@@ -47,7 +47,10 @@ def _drive(pwsh, home, lines, settle=1.0):
                 for _ in range(chunk.count(b"\x1b[6n")):
                     os.write(master, b"\x1b[1;1R")
 
-    drain(3)                                 # pwsh startup
+    deadline = time.time() + 30              # pwsh startup: wait for the prompt,
+    while b"PS " not in out and time.time() < deadline:   # not a fixed sleep
+        drain(0.5)
+    drain(0.5)
     for line in lines + ["exit"]:
         os.write(master, (line + "\r").encode())
         drain(settle)

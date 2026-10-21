@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""Render the Homebrew formula and Chocolatey package for a release.
+"""Render the Homebrew formula for a release.
 
-    python3 packaging/render.py            # URLs point at the GitHub release asset
-    python3 packaging/render.py --local    # file:// URLs, for testing before release
+    python3 packaging/render.py            # URL points at the GitHub release asset
+    python3 packaging/render.py --local    # file:// URL, for testing before release
 
-Builds dist/redo_cli-<version>.tar.gz (the exact file uploaded to the GitHub
-release, so its sha256 is known before anything is pushed) and writes:
-    dist/homebrew/redo-cli.rb
-    dist/chocolatey/redo-cli/...   (run `choco pack` in that folder on Windows)
+Builds dist/redo_cli-<version>.tar.gz and the wheel (the exact files uploaded
+to the GitHub release, so the sha256 is known before anything is pushed) and
+writes dist/homebrew/redo-cli.rb.
 """
 import hashlib
 import pathlib
@@ -27,8 +26,8 @@ def version() -> str:
 
 
 def build(ver: str):
-    """sdist for Homebrew (it builds from source), wheel for Chocolatey (pip
-    installs it offline). Both get uploaded to the GitHub release as-is."""
+    """sdist for Homebrew (it builds from source); the wheel is for pip/pipx
+    users installing from the release. Both get uploaded as-is."""
     sdist = DIST / ("redo_cli-%s.tar.gz" % ver)
     wheel = DIST / ("redo_cli-%s-py3-none-any.whl" % ver)
     for f in (sdist, wheel):
@@ -44,42 +43,22 @@ def sha256(path: pathlib.Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def url_for(path: pathlib.Path, ver: str, local: bool) -> str:
-    if local:
-        return path.resolve().as_uri()
-    return "https://github.com/%s/releases/download/v%s/%s" % (REPO, ver, path.name)
-
-
-def render(src: pathlib.Path, dst: pathlib.Path, **values) -> None:
-    text = src.read_text()
-    for k, v in values.items():
-        text = text.replace("@%s@" % k.upper(), v)
-    left = re.findall(r"@[A-Z0-9]+@", text)
-    if left:
-        sys.exit("unfilled placeholders in %s: %s" % (src.name, left))
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_text(text)
-
-
 def main() -> None:
-    local = "--local" in sys.argv
     ver = version()
     sdist, wheel = build(ver)
-
-    render(PKG / "homebrew" / "redo-cli.rb.in", DIST / "homebrew" / "redo-cli.rb",
-           url=url_for(sdist, ver, local), sha256=sha256(sdist))
-
-    choco = DIST / "chocolatey" / "redo-cli"
-    shutil.rmtree(choco, ignore_errors=True)
-    render(PKG / "chocolatey" / "redo-cli.nuspec.in", choco / "redo-cli.nuspec", version=ver)
-    render(PKG / "chocolatey" / "tools" / "chocolateyinstall.ps1.in", choco / "tools" / "chocolateyinstall.ps1",
-           version=ver, wheel_url=url_for(wheel, ver, local), wheel_sha256=sha256(wheel))
-    shutil.copy(PKG / "chocolatey" / "tools" / "chocolateyuninstall.ps1", choco / "tools")
-    shutil.copy(ROOT / "LICENSE", choco / "tools" / "LICENSE.txt")
-
+    url = (sdist.resolve().as_uri() if "--local" in sys.argv else
+           "https://github.com/%s/releases/download/v%s/%s" % (REPO, ver, sdist.name))
+    text = (PKG / "homebrew" / "redo-cli.rb.in").read_text()
+    text = text.replace("@URL@", url).replace("@SHA256@", sha256(sdist))
+    left = re.findall(r"@[A-Z0-9]+@", text)
+    if left:
+        sys.exit("unfilled placeholders: %s" % left)
+    out = DIST / "homebrew" / "redo-cli.rb"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text)
     for f in (sdist, wheel):
         print("%-8s %s\n         sha256 %s" % (f.suffix.lstrip("."), f, sha256(f)))
-    print("wrote    %s\n         %s" % (DIST / "homebrew" / "redo-cli.rb", choco))
+    print("wrote    %s" % out)
 
 
 if __name__ == "__main__":

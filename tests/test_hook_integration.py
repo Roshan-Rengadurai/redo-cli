@@ -39,11 +39,24 @@ def _session(sh, home, script):
 
 
 def _pty_session(sh, home, lines, settle=0.4):
-    """Drive the shell through a real pty (needed for anything that touches the
-    line editor, e.g. zsh `print -z`). Returns everything the shell wrote."""
+    """Drive the shell through a real pty, set up like a terminal: it is the
+    shell's controlling tty (fish refuses to run otherwise), has a window
+    size, and answers the cursor/device queries fish 4 sends at startup.
+    Needed for the line editor (zsh `print -z`) and for fish's preexec/
+    postexec events, which only fire for commands typed at a terminal."""
+    import fcntl
+    import struct
+    import termios
     master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 200, 0, 0))
+
+    def controlling_tty():
+        os.setsid()
+        fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
     proc = subprocess.Popen(SHELL_ARGS[sh], stdin=slave, stdout=slave, stderr=slave,
-                            env=dict(_env(home), TERM="xterm"), close_fds=True)
+                            env=dict(_env(home), TERM="xterm"), close_fds=True,
+                            preexec_fn=controlling_tty)
     os.close(slave)
     out = b""
 
@@ -60,6 +73,10 @@ def _pty_session(sh, home, lines, settle=0.4):
                 if not chunk:
                     return
                 out += chunk
+                for query, answer in ((b"\x1b[6n", b"\x1b[1;1R"), (b"\x1b[0c", b"\x1b[?62;22c"),
+                                      (b"\x1b[c", b"\x1b[?62;22c")):
+                    if query in chunk:
+                        os.write(master, answer)
 
     drain(settle)
     for line in lines:
@@ -109,6 +126,9 @@ class HookIntegration(unittest.TestCase):
         if not shutil.which(sh):
             self.skipTest(sh + " not installed")
         hook = self._hook(sh)
+        if sh == "fish":   # fish only fires preexec/postexec for typed commands
+            lines = ["source %s" % hook] + [ln for ln in body.split("\n") if ln]
+            return subprocess.CompletedProcess(sh, 0, _pty_session(sh, self.home, lines, 0.8), "")
         return _session(sh, self.home, "source %s\n%s\nexit\n" % (hook, body))
 
     # -- capture ---------------------------------------------------------

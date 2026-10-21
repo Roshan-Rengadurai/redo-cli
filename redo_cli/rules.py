@@ -718,16 +718,22 @@ def _help_flags(tool: str, sub: str = "") -> frozenset:
     `--help` for tools without subcommands. Only consulted after a failure."""
     text = _man_text("%s-%s" % (tool, sub)) if sub else _man_text(tool)
     if not sub:
-        def run():
-            env = dict(os.environ, PAGER="cat", MANPAGER="cat", GIT_PAGER="cat")
-            try:
-                r = subprocess.run([tool, "--help"], capture_output=True, text=True,
-                                   timeout=2, stdin=subprocess.DEVNULL, env=env)
-                return r.stdout + r.stderr
-            except (OSError, subprocess.SubprocessError):
-                return ""
-        text += _disk_cached("help." + tool, run)
+        text += _help_text(tool)
     return frozenset(_flags_in(text))
+
+
+def _help_text(tool: str) -> str:
+    """`tool --help` (pagers off, no stdin, 2 s cap), cached on disk. GNU
+    tools document every option here, and Linux images often ship no man pages."""
+    def run():
+        env = dict(os.environ, PAGER="cat", MANPAGER="cat", GIT_PAGER="cat")
+        try:
+            r = subprocess.run([tool, "--help"], capture_output=True, text=True,
+                               timeout=2, stdin=subprocess.DEVNULL, env=env)
+            return r.stdout + r.stderr
+        except (OSError, subprocess.SubprocessError):
+            return ""
+    return _disk_cached("help." + tool, run)
 
 
 def _flags_in(text: str) -> set:
@@ -744,7 +750,7 @@ def _flags_in(text: str) -> set:
 def _short_flags(tool: str, sub: str, stderr: str) -> set:
     """Single-letter options the tool documents: `-p, --parents` lines in
     its man page, `[-abc]` / `-x` in the usage text it just printed."""
-    text = (_man_text("%s-%s" % (tool, sub)) if sub else _man_text(tool)) + "\n" + stderr
+    text = (_man_text("%s-%s" % (tool, sub)) if sub else _man_text(tool) + _help_text(tool)) + "\n" + stderr
     letters = set(re.findall(r"(?m)^\s+-([A-Za-z0-9])\b", text))
     for cluster in re.findall(r"\[-([A-Za-z0-9]+)\]", text):
         letters |= set(cluster)
@@ -1809,6 +1815,18 @@ def match_npm_script(e: FailureEvent) -> Optional[Diagnosis]:
                  "Only a few scripts (start, test) work without `run`.")
 
 
+@functools.lru_cache(maxsize=1)
+def _stdlib_names() -> frozenset:
+    """sys.stdlib_module_names, or (Python 3.9) what's in the stdlib folder."""
+    names = getattr(sys, "stdlib_module_names", None)
+    if names:
+        return frozenset(names)
+    import pkgutil
+    import sysconfig
+    found = {m.name for m in pkgutil.iter_modules([sysconfig.get_paths()["stdlib"]])}
+    return frozenset(found | set(sys.builtin_module_names))
+
+
 def _module_candidates(name: str) -> list:
     """stdlib module names near `name`; for `http.serve`, submodules of http."""
     import importlib.util
@@ -1821,7 +1839,7 @@ def _module_candidates(name: str) -> list:
             return []
         subs = [m.name for m in pkgutil.iter_modules(spec.submodule_search_locations or [])] if spec else []
         return ["%s.%s" % (pkg, n) for n in _close_names(sub, subs, 2)]
-    return _close_names(name, getattr(sys, "stdlib_module_names", ()), 2)
+    return _close_names(name, _stdlib_names(), 2)
 
 
 def match_java_go(e: FailureEvent) -> Optional[Diagnosis]:

@@ -279,6 +279,11 @@ function _redo_postexec --on-event fish_postexec
         set -e _REDO_CMD
         return
     end
+    # `exit` fires postexec too, still carrying the previous command's status
+    if string match -qr '^\s*exit(\s|$)' -- "$_REDO_CMD"
+        set -e _REDO_CMD
+        return
+    end
     if test $code -eq 0; and set -q _REDO_CMD
         true 2>/dev/null > __PUSHDIR__/ok
     else if test $code -ne 130 -a $code -ne 141 -a $code -ne 148
