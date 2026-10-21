@@ -25,7 +25,6 @@ MVP, built in stages.
 
 ```sh
 brew install roshan-rengadurai/tap/redo-cli     # macOS / Linux
-choco install redo-cli                          # Windows
 pipx install git+https://github.com/Roshan-Rengadurai/redo-cli   # anywhere with Python 3.9+
 ```
 
