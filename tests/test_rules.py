@@ -714,7 +714,7 @@ class BlindQARound6(unittest.TestCase):
         self.mk("src/", "README.md")
         for cmd, err, want in [
                 ("mkdir -P x", "mkdir: illegal option -- P", "mkdir -p x"),
-                ("du -SH src", "du: invalid option -- S", "du -sh src"),
+                ("mkdir -V x", "mkdir: illegal option -- V", "mkdir -v x"),   # bad on BSD and GNU
                 ("git diff ---stat", "error: invalid option: ---stat", "git diff --stat"),
                 ("pip3 --evrsion", "no such option: --evrsion", "pip3 --version"),
                 ("sed --n 1p README.md", "sed: illegal option -- -", "sed -n 1p README.md"),

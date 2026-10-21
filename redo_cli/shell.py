@@ -338,9 +338,13 @@ function global:prompt {
         $err = $global:Error[0]
         $newErr = $err -and -not [object]::ReferenceEquals($err, $global:_RedoLastErr)
         $global:_RedoLastErr = $err
+        # $? alone isn't enough: on Linux, pwsh's command-not-found feedback
+        # runs after the failure and leaves $? true. A new $Error entry or a
+        # Failed history status still says what happened.
+        $failed = (-not $ok) -or $newErr -or ($h.ExecutionStatus -eq 'Failed')
         if ($global:_RedoSkip) {
             $global:_RedoSkip = $false
-        } elseif ($ok) {
+        } elseif (-not $failed) {
             try { [IO.File]::WriteAllText(__OK__, '') } catch {}
         } elseif ($h.ExecutionStatus -ne 'Stopped' -and                # Ctrl-C isn't a failure
                   $native -notin 130, 141, 148, -1073741510) {        # (0xC000013A = Ctrl-C on Windows)

@@ -62,6 +62,12 @@ def _drive(pwsh, home, lines, settle=1.0):
     return out.decode(errors="replace")
 
 
+def _transcript(out: str) -> str:
+    """Session output for a failure message (CI can't be re-run interactively)."""
+    import re
+    return "\n--- pwsh transcript ---\n" + re.sub(r"\x1b\[[0-9;?]*[A-Za-z]|\r", "", out)[-1500:]
+
+
 @unittest.skipUnless(PWSH and not WINDOWS, "needs pwsh and a pty")
 class PowerShellHook(unittest.TestCase):
     def setUp(self):
@@ -93,9 +99,10 @@ class PowerShellHook(unittest.TestCase):
         return parse_spool(self.spool.read_text()) if self.spool.exists() else []
 
     def test_command_not_found_is_127(self):
-        self.run_ps("gti status")
+        out = self.run_ps("gti status", "$?; $Error[0].FullyQualifiedErrorId; (Get-History -Count 1).ExecutionStatus")
         recs = self.records()
-        self.assertEqual([(r.command, r.exit_code, r.shell) for r in recs], [("gti status", 127, "pwsh")])
+        self.assertEqual([(r.command, r.exit_code, r.shell) for r in recs], [("gti status", 127, "pwsh")],
+                         _transcript(out))
 
     def test_native_exit_code_kept(self):
         fail = "sh -c 'exit 3'"
@@ -104,8 +111,8 @@ class PowerShellHook(unittest.TestCase):
 
     def test_cmdlet_error_does_not_reuse_stale_exit_code(self):
         fail = "sh -c 'exit 3'"
-        self.run_ps(fail, "Get-Item does-not-exist-zz")
-        self.assertEqual([r.exit_code for r in self.records()], [3, 1])
+        out = self.run_ps(fail, "Get-Item does-not-exist-zz")
+        self.assertEqual([r.exit_code for r in self.records()], [3, 1], _transcript(out))
 
     def test_success_marker(self):
         ok = self.redo_home / "ok"
