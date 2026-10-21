@@ -48,3 +48,5 @@ class Diagnosis:
     explanation: str      # root-cause reasoning, for `redo explain`
     lesson: str           # the concept, for `redo learn`
     matched: bool = True  # False == fallback, no rule fired
+    options: tuple = ()   # 2+ candidate fixes -> `redo fix` prompts a pick
+    risky: bool = False   # fix destroys/overwrites data: never auto-run

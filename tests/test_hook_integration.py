@@ -2,6 +2,12 @@
 isn't installed. Each session: source hook, run a failing command, exit."""
 
 import os
+import sys
+import unittest
+
+if sys.platform == "win32":       # zsh/bash/fish via a pty: POSIX only
+    raise unittest.SkipTest("POSIX shell hooks need a pty")
+
 import pty
 import select
 import shutil
@@ -9,7 +15,6 @@ import stat
 import subprocess
 import tempfile
 import time
-import unittest
 from pathlib import Path
 
 from redo_cli import shell
@@ -138,6 +143,26 @@ class HookIntegration(unittest.TestCase):
     def test_bash_skips_signal_exits(self): self._check_signal_exit_skipped("bash")
     def test_fish_skips_signal_exits(self): self._check_signal_exit_skipped("fish")
 
+    def _check_pipeline_not_found_captured(self, sh):
+        self._run(sh, "redo_no_such_cmd_xyz | cat\n")
+        recs = self._records()
+        self.assertEqual([(r.command, r.exit_code) for r in recs],
+                         [("redo_no_such_cmd_xyz | cat", 127)])
+
+    def test_zsh_captures_not_found_inside_pipeline(self):  self._check_pipeline_not_found_captured("zsh")
+    def test_bash_captures_not_found_inside_pipeline(self): self._check_pipeline_not_found_captured("bash")
+    def test_fish_captures_not_found_inside_pipeline(self): self._check_pipeline_not_found_captured("fish")
+
+    def _check_success_marker(self, sh):
+        ok = self.redo_home / "ok"
+        self._run(sh, "true\n")
+        self.assertTrue(ok.exists(), "success should create the marker")
+        self._run(sh, "true\nfalse\n")
+        self.assertFalse(ok.exists(), "a failure must delete it, same second or not")
+
+    def test_zsh_success_marker(self):  self._check_success_marker("zsh")
+    def test_bash_success_marker(self): self._check_success_marker("bash")
+
     # -- the redo function -------------------------------------------------
 
     def _check_redo_invocation_not_recorded(self, sh):
@@ -178,6 +203,18 @@ class HookIntegration(unittest.TestCase):
         ])
         self.assertIn("echo FROM-BUFFER", out)                 # drawn in the editor
         self.assertRegex(out, r"(?<!echo )FROM-BUFFER")         # ...and then executed
+
+    def test_zsh_push_keeps_backslash_continuations(self):
+        if not shutil.which("zsh"):
+            self.skipTest("zsh not installed")
+        hook = self._hook("zsh")
+        out = _pty_session("zsh", self.home, [
+            "source %s" % hook,
+            "export REDO_STUB_PUSH=$'push\\necho JOINED \\\\\\nTOGETHER'",
+            "redo",
+            "",
+        ])
+        self.assertIn("JOINED TOGETHER", out)
 
     def test_bash_push_mode_replaces_redo_in_history(self):
         # `history -s` swaps the `redo` entry for the fix, so up-arrow lands

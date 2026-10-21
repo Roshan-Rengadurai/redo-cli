@@ -15,6 +15,8 @@ _ENABLED = (
     and sys.stdout.isatty()
     and os.environ.get("NO_COLOR") is None
     and os.environ.get("TERM") != "dumb"
+    # classic Windows consoles print raw escapes; Windows Terminal / VS Code don't
+    and (sys.platform != "win32" or bool(os.environ.get("WT_SESSION") or os.environ.get("TERM_PROGRAM")))
 )
 
 

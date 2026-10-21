@@ -80,6 +80,15 @@ class StorageTests(unittest.TestCase):
         self.assertFalse(p.exists())
         self.assertEqual(self.store.latest().command, "gti status")
 
+    def test_ingest_skips_no_match_exits(self):
+        from redo_cli.storage import spool_path
+        spool_path().write_text(
+            "zsh\x1f1\x1f/tmp\x1f5\x1fgrep -rn foo .\x1e"
+            "zsh\x1f1\x1f/tmp\x1f6\x1fcat x | grep foo\x1e"
+            "zsh\x1f2\x1f/tmp\x1f7\x1fgrep foo nofile\x1e")   # exit 2 = real error
+        self.assertEqual(self.store.ingest_spool(spool_path()), 1)
+        self.assertEqual(self.store.latest().command, "grep foo nofile")
+
     def test_ingest_spool_missing_file_is_noop(self):
         from redo_cli.storage import spool_path
         self.assertEqual(self.store.ingest_spool(spool_path()), 0)

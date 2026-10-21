@@ -106,7 +106,7 @@ class HookSourceTests(unittest.TestCase):
         self.assertIn("add-zsh-hook precmd _redo_precmd", src)
         self.assertIn(r"printf '%s\037%s\037%s\037%s\037%s\036'", src)
         self.assertIn(">> '/tmp/redo home/spool'", src)
-        self.assertIn("print -z", src)
+        self.assertIn("print -rz", src)
 
     def test_bash_hook_prepends_prompt_command(self):
         src = shell.hook_source("bash", self.spool)
@@ -121,7 +121,7 @@ class HookSourceTests(unittest.TestCase):
         self.assertIn("commandline -r", src)
 
     def test_every_hook_skips_signal_exits_and_defines_redo(self):
-        for sh in shell.SUPPORTED:
+        for sh in ("zsh", "bash", "fish"):
             src = shell.hook_source(sh, self.spool)
             for code in ("130", "141", "148"):
                 self.assertIn(code, src, sh)
@@ -176,3 +176,49 @@ class InitTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PowerShellTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_supported(self):
+        self.assertIn("pwsh", shell.SUPPORTED)
+        self.assertIn("powershell", shell.SUPPORTED)
+
+    def test_detect_on_windows_without_shell_env(self):
+        self.assertIn(shell.detect_shell({"PSModulePath": "C:\\x"}, platform="win32"), ("pwsh", "powershell"))
+
+    def test_hook_file_is_ps1(self):
+        self.assertEqual(shell.hook_path("pwsh", self.root), self.root / "hook.ps1")
+        self.assertEqual(shell.hook_path("powershell", self.root), self.root / "hook.ps1")
+
+    def test_source_line_dot_sources_with_ps_quoting(self):
+        self.assertEqual(shell.source_line(Path("/h/it's/hook.ps1"), "pwsh"),
+                         ". '/h/it''s/hook.ps1'  # redo-cli")
+
+    def test_hook_source_is_powershell(self):
+        src = shell.hook_source("pwsh", Path("/tmp/r h/spool"))
+        for needle in ("function global:prompt", "Get-History -Count 1", "CommandNotFoundException",
+                       "AddToHistory", "[char]0x1f", "'/tmp/r h/spool'", "Get-Command -CommandType Application redo"):
+            self.assertIn(needle, src)
+        self.assertNotIn("`u{", src)           # must run on Windows PowerShell 5.1
+
+    def test_alias_line_and_list(self):
+        rc = self.root / "profile.ps1"
+        self.assertEqual(shell.alias_line("r", "pwsh"), "Set-Alias -Name r -Value redo  # redo-cli")
+        self.assertEqual(shell.add_alias("r", rc, "pwsh"), "added")
+        self.assertEqual(shell.list_aliases(rc), ["r"])
+        rc.write_text(rc.read_text() + "Set-Alias g git\n")
+        self.assertEqual(shell.add_alias("g", rc, "pwsh"), "conflict")
+
+    def test_add_and_remove_init(self):
+        rc, hook, spool = self.root / "p.ps1", self.root / ".redo" / "hook.ps1", self.root / ".redo" / "spool"
+        self.assertEqual(shell.add_init("pwsh", rc, hook, spool), "added")
+        self.assertIn(". '%s'  # redo-cli" % hook, rc.read_text())
+        self.assertEqual(shell.remove_init(rc, hook, "pwsh"), "removed")
+        self.assertNotIn("redo-cli", rc.read_text())

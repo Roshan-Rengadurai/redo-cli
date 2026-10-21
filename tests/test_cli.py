@@ -243,6 +243,22 @@ class CliTests(unittest.TestCase):
         self.assertIn("python3 -c 'import sys; sys.exit(3)'", out)
         self.assertNotIn("'python3 -c", out)      # not re-quoted
 
+    def test_stale_failure_is_labelled_and_not_pushed(self):
+        p = self._push_file()
+        self._seed("gti status", "zsh: command not found: gti", code=127)   # timestamp 1.0
+        open(os.path.join(self.tmp.name, "ok"), "w").close()               # a success since
+        rc, out = self._run([])
+        self.assertIn("last command succeeded", out)
+        self.assertIsNone(self._read_push(p))
+
+    def test_risky_fix_goes_to_history_not_prompt(self):
+        p = self._push_file()
+        self._seed("git rest --hard", "git: 'rest' is not a git command.\n\n"
+                   "The most similar command is\n\treset\n")
+        rc, out = self._run(["-y"])
+        self.assertEqual(self._read_push(p), "hist\ngit reset --hard\n")
+        self.assertIn("press up", out)
+
 
 if __name__ == "__main__":
     unittest.main()

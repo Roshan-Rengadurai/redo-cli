@@ -18,17 +18,35 @@ MVP, built in stages.
 |-------|-------|-------|
 | 1 | Detection engine, SQLite history, `run/fix/explain/learn/history/stats`, `alias` | done |
 | 2 | `redo init` shell hook (auto-capture), fix pushed onto the prompt | done |
-| 3 | Live stderr capture in hook mode (opt-in, pty), more rules, brew packaging | next |
+| 3 | PowerShell hook, Homebrew tap + Chocolatey packages, CI on Linux/macOS/Windows | done |
+| 4 | Live stderr capture in hook mode (opt-in, pty) | next |
 
 ## Install
 
 ```sh
-pipx install -e .      # or: pip install -e . / uv tool install .
-redo init              # adds one `source` line to your .zshrc / .bash_profile / config.fish
+brew install roshan-rengadurai/tap/redo-cli     # macOS / Linux
+choco install redo-cli                          # Windows
+pipx install git+https://github.com/Roshan-Rengadurai/redo-cli   # anywhere with Python 3.9+
+```
+
+Then, once:
+
+```sh
+redo init        # zsh / bash / fish: adds one `source` line to your rc file
 exec $SHELL
 ```
 
-Now every failing command is captured automatically (zsh, bash, fish). When
+```powershell
+redo init        # PowerShell 7 or Windows PowerShell: adds one line to $PROFILE
+. $PROFILE       # (on macOS/Linux pwsh: redo init --shell pwsh)
+```
+
+The package is called `redo-cli`; the command is `redo`. (Homebrew's own
+`redo` formula is an unrelated build tool -- the two can't be installed side
+by side.)
+
+Now every failing command is captured automatically (zsh, bash, fish,
+PowerShell). When
 one fails, type `redo`:
 
 ```
@@ -49,8 +67,10 @@ $ git status█
 ```
 
 The fix lands in your line editor; edit it or hit enter. `redo -y` runs it
-straight away; `redo --no-push` just prints. In bash the fix replaces `redo`
-in your history instead (press ↑).
+straight away; `redo --no-push` just prints. In bash and PowerShell the fix
+goes into your history instead (press ↑). A fix that deletes or overwrites
+anything is never pre-filled -- it's always ↑ then enter, so a command you
+start typing can't get glued onto it.
 
 **redo never re-runs your failed command behind your back.** The hook only
 records the command, exit code and directory — it costs one `printf`, on
@@ -84,12 +104,36 @@ stderr — if it exits non-zero.
 | `redo init` | install the shell hook (`--print`, `--remove`, `--shell`) |
 | `redo alias <name>` | add a shell alias for redo (`--print`, `--remove`, no args = list) |
 
-## What it detects today
+## What it fixes
 
-git push rejected · merge conflicts · command not found (incl. common typos) ·
-permission denied · port already in use (EADDRINUSE) · missing Python module ·
-missing Node module · npm install failures · missing virtualenv · brew formula
-missing — with a safe, actionable fallback for everything else.
+No hand-written typo tables. redo checks a failure against what's actually
+true on your machine, in this order of evidence:
+
+- **what the tool said:** its own "did you mean" (git, npm, pip, cargo,
+  gh/kubectl, brew, Python), a command it printed (`git push --set-upstream
+  origin x`), the option it rejected, checked against its man page / `--help`
+- **what's installed:** every executable on `$PATH`, ranked by how people
+  actually slip (swapped letters before far-away keys) and how common the tool
+  is; real ties are shown as a list, not guessed
+- **what's on disk / in the repo:** close file and folder names (any path
+  component, case-only differences), Makefile targets, package.json scripts,
+  git branches and upstreams, ports already in use
+- **what you've run before:** your shell history, including this session
+- **failure shapes thefuck knows:** pasted `$ ` prompts, `git git`,
+  `git-log`, missing `./`, missing spaces (`grep-c`, `gitstatus`), a folder
+  where a file was expected (`cat dir` -> `ls`, `grep`/`cp` -> `-r`), missing
+  parents (`mkdir -p`), `ln -s` order, unbalanced quotes, `python3 -m` typos,
+  `.class`/`.java`/`.go` names, nothing staged, branch exists / doesn't exist,
+  unrelated histories, flags after file names
+
+Most of this works in hook mode too, where no output is captured: the evidence
+comes from the disk, the repo and your history instead.
+
+**Safety.** A fix that deletes, moves, overwrites or kills is never high
+confidence, is marked *careful*, and is never run by `-y`. redo never turns a
+typo into `rm`, never retargets `rm`/`mv`/`git branch -D`, never "corrects" a
+file into one already in the command (`sort a.tx > a.txt` would empty it), and
+never re-runs your failed command behind your back.
 
 ## Where things live
 
@@ -113,7 +157,7 @@ writes `push\n<fix>` (or `run\n<fix>` for `-y`) and the function does
 ## Design principles
 
 deterministic first · zero runtime deps · fast startup (~35 ms cold) · never
-re-run a failed command implicitly · raw events are the source of truth
+re-run a failed command implicitly · never auto-run a destructive fix · raw events are the source of truth
 (stats/explain/learn re-derive from them) · always return something actionable.
 
 ## Tests
@@ -123,6 +167,8 @@ uv venv && uv pip install -e ".[dev]"
 .venv/bin/python -m pytest -q
 ```
 
-`tests/test_hook_integration.py` drives real zsh/bash/fish sessions through
-the hook (skipped per shell when it isn't installed); `tests/test_bench.py`
-enforces a cold-start ceiling.
+`tests/test_hook_integration.py` drives real zsh/bash/fish sessions and
+`tests/test_pwsh_integration.py` a real PowerShell through a pty (each skipped
+when that shell isn't installed); `tests/test_bench.py` enforces a cold-start
+ceiling. `qa/` holds the black-box regression harness (see `qa/README.md`);
+releasing is in `packaging/RELEASING.md`.

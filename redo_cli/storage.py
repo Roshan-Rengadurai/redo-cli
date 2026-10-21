@@ -39,6 +39,17 @@ def spool_path() -> Path:
     return home_dir() / "spool"
 
 
+# Exit 1 from these means "no match" / "differs", not an error (errors are 2+).
+_EXIT1_OK = {"grep", "egrep", "fgrep", "rg", "ag", "diff", "cmp", "test", "["}
+
+
+def is_benign(event: FailureEvent) -> bool:
+    if event.exit_code != 1 or event.stderr.strip():
+        return False
+    last = event.command.split("|")[-1].split()
+    return bool(last) and os.path.basename(last[0]) in _EXIT1_OK
+
+
 def parse_spool(text: str) -> List[FailureEvent]:
     """Decode spool records. Anything malformed (wrong field count, bad
     numbers, a partial record without its terminator) is dropped."""
@@ -109,11 +120,14 @@ class Storage:
             return 0
         try:
             events = parse_spool(work.read_text(errors="replace"))
+        except OSError:          # unreadable spool: drop it, don't crash every redo
+            events = []
         finally:
             try:
                 work.unlink()
             except OSError:
                 pass
+        events = [e for e in events if not is_benign(e)]
         for e in events:
             self.record(e)
         return len(events)
