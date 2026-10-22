@@ -172,7 +172,13 @@ class RuleTests(unittest.TestCase):
     def test_chained_typo_brew_subcommand_refined(self):
         if not shutil.which("brew"):
             self.skipTest("brew not installed")
-        d = diagnose(ev("brwe instl", 127, "zsh: command not found: brwe"))
+        # the refinement logic, not Homebrew's speed: a cold `brew commands`
+        # can blow the 5 s cap on a CI runner
+        from unittest import mock
+        from redo_cli import rules
+        with mock.patch.object(rules, "_tool_subcommands",
+                               lambda tool: frozenset({"install", "list", "upgrade", "info"})):
+            d = diagnose(ev("brwe instl", 127, "zsh: command not found: brwe"))
         self.assertEqual(d.rule_id, "command_typo_subcommand")
         self.assertIn("brew install", (d.fix_command,) + d.options)
 
